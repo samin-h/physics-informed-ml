@@ -64,6 +64,7 @@ import glob
 import h5py
 import numpy as np
 import jax
+from time import perf_counter
 import jax.numpy as jnp
 from scipy.signal import get_window
 from typing import Iterator
@@ -284,7 +285,9 @@ def batch_iterator(shard_paths: list,
     
     for path in paths:
         print(f" Loading: {os.path.basename(path)}")
+        t0_ = perf_counter()
         shard = load_shard(path)
+        print(f"Finished Loading in {perf_counter() - t0_}")
         N     = shard["mixture"].shape[0]
         idx   = np.arange(N)
         if shuffle:
