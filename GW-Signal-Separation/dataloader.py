@@ -213,6 +213,7 @@ def load_shard(path: str) -> dict:
     Load and preprocess all samples in one HDF5 shard.
     Compatible with the JAX environment.
     """
+    t0 = perf_counter()
     # --- Load raw data safely ---
     with h5py.File(path, "r") as f:
         mixture = np.empty(f["mixture"].shape, dtype=np.float64)
@@ -226,6 +227,9 @@ def load_shard(path: str) -> dict:
         f["h2"].read_direct(h2)
         f["params1"].read_direct(params1)
         f["params2"].read_direct(params2)
+    
+    t1 = perf_counter()
+    print(f"HDF5 READ: {t1 - t0:.2f}s")
 
     # Convert to float32 for efficient JAX training
     mixture = mixture.astype(np.float32)
@@ -233,6 +237,9 @@ def load_shard(path: str) -> dict:
     h2      = h2.astype(np.float32)
     params1 = params1.astype(np.float32)
     params2 = params2.astype(np.float32)
+
+    t2 = perf_counter()
+    print(f"Type Convert Time: {t2 - t1:.2f}s")
 
     # --- Preallocate arrays ---
     N = mixture.shape[0]
@@ -246,7 +253,9 @@ def load_shard(path: str) -> dict:
         MIX[i], H1[i], H2[i], PSD[i] = preprocess_sample(
             mixture[i], h1[i], h2[i]
         )
-
+    t3 = perf_counter()
+    print(f"Preprocess {N} Sample Time: {t3 - t2:.2f}s")
+    print(f"Total Time: {t3-t0:.2f}s")
     return {
         "mixture": MIX,
         "h1": H1,
