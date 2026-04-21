@@ -67,7 +67,7 @@ import jax
 from time import perf_counter
 import jax.numpy as jnp
 from scipy.signal import get_window
-from scipy.ndimage import uniform_filter1d
+from scipy.ndimage import convolve1d
 from typing import Iterator
 from utils import timeit
 
@@ -107,7 +107,6 @@ def stft(x: np.ndarray) -> np.ndarray:
     Returns:
         complex64 (N_FRAMES, N_BINS)
     """
-    x = x.astype(np.float32)
     frames = np.lib.stride_tricks.as_strided(
         x,
         shape = (N_FRAMES, N_FFT),
@@ -142,7 +141,7 @@ def estimate_psd_fast(X: np.ndarray) -> np.ndarray:
     """Vectorized PSD estimation."""
     power = np.abs(X) ** 2
     kernel = np.ones(PSD_SMOOTH) / PSD_SMOOTH
-    psd = uniform_filter1d(power, size=PSD_SMOOTH, axis=0, mode='nearest')
+    psd = convolve1d(power, weights=kernel, axis=0, mode='nearest')
     return np.maximum(psd, 1e-40).astype(np.float32)
 
 # -- 4. Whiten + crop
@@ -200,11 +199,11 @@ def load_shard(path: str) -> dict:
 
     # --- Load raw data safely ---
     with h5py.File(path, "r") as f:
-        mixture = jnp.empty(f["mixture"].shape, dtype=np.float64)
-        h1      = jnp.empty(f["h1"].shape, dtype=np.float64)
-        h2      = jnp.empty(f["h2"].shape, dtype=np.float64)
-        params1 = jnp.empty(f["params1"].shape, dtype=np.float64)
-        params2 = jnp.empty(f["params2"].shape, dtype=np.float64)
+        mixture = np.empty(f["mixture"].shape, dtype=np.float64)
+        h1      = np.empty(f["h1"].shape, dtype=np.float64)
+        h2      = np.empty(f["h2"].shape, dtype=np.float64)
+        params1 = np.empty(f["params1"].shape, dtype=np.float64)
+        params2 = np.empty(f["params2"].shape, dtype=np.float64)
 
         f["mixture"].read_direct(mixture)
         f["h1"].read_direct(h1)
@@ -223,10 +222,10 @@ def load_shard(path: str) -> dict:
     t0 = perf_counter()
     # --- Preallocate arrays ---
     N = mixture.shape[0]
-    MIX = jnp.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
-    H1  = jnp.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
-    H2  = jnp.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
-    PSD = jnp.zeros((N, N_FRAMES, N_FREQ), dtype=np.float32)
+    MIX = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
+    H1  = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
+    H2  = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
+    PSD = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.float32)
 
     # --- Preprocess samples ---
     for i in range(N):
@@ -234,7 +233,7 @@ def load_shard(path: str) -> dict:
             mixture[i], h1[i], h2[i]
         )
     t3 = perf_counter()
-    print(f"Preprocess {N} Sample Time: {t3 - t2:.2f}s")
+    print(f"Preprocess {N} Sample Time: {t3 - t0:.2f}s")
     print(f"Total Time: {t3-t0:.2f}s")
     return {
         "mixture": MIX,
@@ -373,3 +372,33 @@ if __name__ == "__main__":
 #     for k, v in batch.items():
 #         print(f" {k:10s}: {v.shape} {v.dtype}")
 #     get_shard_splits(data_dir)
+
+# -- 6. Shard loader --
+# def load_shard(path: str) -> dict:
+#     """
+#     Load and preprocess all samples in one HDF5 shard.
+#     """
+#     with h5py.File(path, "r") as f:
+#         mixture = np.emptyf["mixture"][:].astype(np.float32)
+#         h1      = f["h1"][:].astype(np.float32)
+#         h2      = f["h2"][:].astrype(np.float32)
+#         params1 = f["params1"][:].astype(np.float32)
+#         params2 = f["params2"][:].astype(np.float32)
+    
+#     N   = mixture.shape[0]
+#     MIX = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
+#     H1  = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
+#     H2  = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
+#     PSD = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.float32)
+    
+#     for i in range(N):
+#         MIX[i], H1[i], H2[i], PSD[i] = preprocess_sample(mixture[i], h1[i], h2[i])
+        
+#     return {
+#         "mixture"  : MIX,
+#         "h1"       : H1,
+#         "h2"       : H2,
+#         "psd"      : PSD,
+#         "params1"  : params1, 
+#         "params2"  : params2,
+#     }
