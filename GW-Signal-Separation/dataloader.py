@@ -66,6 +66,7 @@ import numpy as np
 import jax
 from time import perf_counter
 import jax.numpy as jnp
+from jax.scipy.signal import convolve
 from scipy.signal import get_window
 from scipy.ndimage import convolve1d
 from typing import Iterator
@@ -137,12 +138,12 @@ def estimate_psd(X: np.ndarray) -> np.ndarray:
     )
     return np.maximum(psd, 1e-40).astype(np.float32)
 
-def estimate_psd_fast(X: np.ndarray) -> np.ndarray:
+def estimate_psd_fast(X: np.ndarray) -> jnp.ndarray:
     """Vectorized PSD estimation."""
-    power = np.abs(X) ** 2
-    kernel = np.ones(PSD_SMOOTH) / PSD_SMOOTH
-    psd = convolve1d(power, weights=kernel, axis=0, mode='nearest')
-    return np.maximum(psd, 1e-40).astype(np.float32)
+    power = jnp.abs(X) ** 2
+    kernel = jnp.ones(PSD_SMOOTH) / PSD_SMOOTH
+    psd = convolve(power, kernel, mode='full')
+    return jnp.maximum(psd, 1e-40).astype(jnp.float32)
 
 # -- 4. Whiten + crop
 def whiten_and_crop(X: np.ndarray, psd: np.ndarray) -> np.ndarray:
