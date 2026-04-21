@@ -19,7 +19,7 @@ SAMPLE_RATE = 4096 Hz
     
 N_SAMPLES_T = 16384
     Total samples per signal = 4s * 4096 = 16384
-    
+
 N_FFT = 512
     Window length in samples = 512 / 4096 = 125 ms.
     Frequency resolution = SAMPLE_RATE / N_FFT = 8 Hz per bin.
@@ -64,6 +64,7 @@ import glob
 import h5py
 import numpy as np
 import jax
+from jax.scipy.signal import convolve
 from time import perf_counter
 import jax.numpy as jnp
 from scipy.signal import get_window
@@ -91,13 +92,14 @@ PSD_SMOOTH = 15
 
 WINDOW = get_window(WIN_TYPE, N_FFT).astype(np.float32)
 
-isTimed=True # If True will print the time taken by all the function
+isTimed = True  # If True will print the time taken by all the function
+
 
 # -- 3. STFT --
 def stft(x: np.ndarray) -> np.ndarray:
     """
     Compute Short-Time Fourier Transform.
-    
+
     Uses stride tricks to extract overlapping frames efficiently
     without copying the full array N_FRAMES times.
 
@@ -119,7 +121,7 @@ def stft(x: np.ndarray) -> np.ndarray:
 def estimate_psd(X: np.ndarray) -> np.ndarray:
     """
     Estimate non-stationary PSD via running mean over time frames.
-    
+
     Power at tile (t, f) = |x[t, f]|^2
     Smooth over PSD_SMOOTH frames to get stable noise floar.
 
@@ -141,8 +143,20 @@ def estimate_psd_fast(X: np.ndarray) -> np.ndarray:
     """Vectorized PSD estimation."""
     power = np.abs(X) ** 2
     kernel = np.ones(PSD_SMOOTH) / PSD_SMOOTH
-    psd = convolve1d(power, weights=kernel, axis=0, mode='nearest')
+    psd = convolve1d(power, weights=kernel, axis=0, mode="constant", cval=0)
     return np.maximum(psd, 1e-40).astype(np.float32)
+
+
+@jax.jit
+def estimate_psd_jax(X: jnp.ndarray) -> jnp.ndarray:
+    """Jax Implementation of PSD Estimation"""
+    power = jnp.abs(X) ** 2
+    kernel = jnp.ones((PSD_SMOOTH,)) / PSD_SMOOTH
+    psd = jax.vmap(
+        lambda col: convolve(col, kernel, mode="same"), in_axes=1, out_axes=1
+    )(power)
+    return jnp.maximum(psd, 1e-40).astype(jnp.float32)
+
 
 # -- 4. Whiten + crop
 def whiten_and_crop(X: np.ndarray, psd: np.ndarray) -> np.ndarray:
@@ -161,7 +175,7 @@ def whiten_and_crop(X: np.ndarray, psd: np.ndarray) -> np.ndarray:
         psd : float32 (N_FRAMES, N_BINS)
     Returns:
         complex64 (N_FRAMES, N_FREQ)
-    """ 
+    """
     X_white = X / np.sqrt(psd)
     return X_white[:, F_LOW_BIN:F_HI_BIN].astype(np.complex64)
 
@@ -245,10 +259,12 @@ def load_shard(path: str) -> dict:
     }
     
 # -- 7. Batch iterator --
-def batch_iterator(shard_paths: list,
-                   batch_size: int = 8,
-                   shuffle: bool = True,
-                   rng: np.random.Generator = None) -> Iterator[dict]:
+def batch_iterator(
+    shard_paths: list,
+    batch_size: int = 8,
+    shuffle: bool = True,
+    rng: np.random.Generator = None,
+) -> Iterator[dict]:
     """
     Yield batches of JAX arrays for training.
     
@@ -393,7 +409,7 @@ if __name__ == "__main__":
     
 #     for i in range(N):
 #         MIX[i], H1[i], H2[i], PSD[i] = preprocess_sample(mixture[i], h1[i], h2[i])
-        
+
 #     return {
 #         "mixture"  : MIX,
 #         "h1"       : H1,

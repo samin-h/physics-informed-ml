@@ -2,7 +2,9 @@ from time import perf_counter
 from functools import wraps
 from typing import Any, Callable
 
-def timeit(enabled : bool) -> Callable[..., Any]:
+type F = Callable[..., Any]
+
+def timeit(enabled : bool) -> F:
     """
     Decorator factory to measure and print the execution time of a function.
 
@@ -39,12 +41,12 @@ def timeit(enabled : bool) -> Callable[..., Any]:
     slow_function time: 1.000s (0.017 min)
     """
 
-    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+    def decorator(func: F) -> F:
         if not enabled: 
             return func
         
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args, **kwargs) -> F:
             t0 = perf_counter()
             try:
                 return func(*args, **kwargs)
@@ -63,4 +65,4 @@ if __name__ == "__main__":
         print(f"Slept for {n}s")
         return 3
     
-    print(sleep("helo"))
+    print(sleep(1))
