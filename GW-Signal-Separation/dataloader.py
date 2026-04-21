@@ -67,7 +67,9 @@ import jax
 from time import perf_counter
 import jax.numpy as jnp
 from scipy.signal import get_window
+from scipy.ndimage import uniform_filter1d
 from typing import Iterator
+from utils import timeit
 
 # -- 2. Constants --
 SAMPLE_RATE = 4096
@@ -88,6 +90,8 @@ N_FREQ     = F_HI_BIN - F_LOW_BIN
 PSD_SMOOTH = 15
 
 WINDOW = get_window(WIN_TYPE, N_FFT).astype(np.float32)
+
+isTimed=True # If True will print the time taken by all the function
 
 # -- 3. STFT --
 def stft(x: np.ndarray) -> np.ndarray:
@@ -134,6 +138,13 @@ def estimate_psd(X: np.ndarray) -> np.ndarray:
     )
     return np.maximum(psd, 1e-40).astype(np.float32)
 
+def estimate_psd_fast(X: np.ndarray) -> np.ndarray:
+    """Vectorized PSD estimation."""
+    power = np.abs(X) ** 2
+    kernel = np.ones(PSD_SMOOTH) / PSD_SMOOTH
+    psd = uniform_filter1d(power, size=PSD_SMOOTH, axis=0, mode='nearest')
+    return np.maximum(psd, 1e-40).astype(np.float32)
+
 # -- 4. Whiten + crop
 def whiten_and_crop(X: np.ndarray, psd: np.ndarray) -> np.ndarray:
     """
@@ -170,7 +181,8 @@ def preprocess_sample(mixture, h1, h2):
         psd_c  : float32 (N_FRAMES, N_FREQ) - PSD for unwhitening 
     """
     X_mix = stft(mixture.astype(np.float32))
-    psd   = estimate_psd(X_mix)
+    # psd   = estimate_psd(X_mix)
+    psd = estimate_psd_fast(X_mix)
     
     mix_w = whiten_and_crop(X_mix, psd)
     h1_w  = whiten_and_crop(stft(h1.astype(np.float32)), psd)
@@ -179,48 +191,20 @@ def preprocess_sample(mixture, h1, h2):
     
     return mix_w, h1_w, h2_w, psd_c
 
-# -- 6. Shard loader --
-# def load_shard(path: str) -> dict:
-#     """
-#     Load and preprocess all samples in one HDF5 shard.
-#     """
-#     with h5py.File(path, "r") as f:
-#         mixture = np.emptyf["mixture"][:].astype(np.float32)
-#         h1      = f["h1"][:].astype(np.float32)
-#         h2      = f["h2"][:].astrype(np.float32)
-#         params1 = f["params1"][:].astype(np.float32)
-#         params2 = f["params2"][:].astype(np.float32)
-    
-#     N   = mixture.shape[0]
-#     MIX = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
-#     H1  = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
-#     H2  = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
-#     PSD = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.float32)
-    
-#     for i in range(N):
-#         MIX[i], H1[i], H2[i], PSD[i] = preprocess_sample(mixture[i], h1[i], h2[i])
-        
-#     return {
-#         "mixture"  : MIX,
-#         "h1"       : H1,
-#         "h2"       : H2,
-#         "psd"      : PSD,
-#         "params1"  : params1, 
-#         "params2"  : params2,
-#     }
+
 def load_shard(path: str) -> dict:
     """
     Load and preprocess all samples in one HDF5 shard.
     Compatible with the JAX environment.
     """
-    t0 = perf_counter()
+
     # --- Load raw data safely ---
     with h5py.File(path, "r") as f:
-        mixture = np.empty(f["mixture"].shape, dtype=np.float64)
-        h1      = np.empty(f["h1"].shape, dtype=np.float64)
-        h2      = np.empty(f["h2"].shape, dtype=np.float64)
-        params1 = np.empty(f["params1"].shape, dtype=np.float64)
-        params2 = np.empty(f["params2"].shape, dtype=np.float64)
+        mixture = jnp.empty(f["mixture"].shape, dtype=np.float64)
+        h1      = jnp.empty(f["h1"].shape, dtype=np.float64)
+        h2      = jnp.empty(f["h2"].shape, dtype=np.float64)
+        params1 = jnp.empty(f["params1"].shape, dtype=np.float64)
+        params2 = jnp.empty(f["params2"].shape, dtype=np.float64)
 
         f["mixture"].read_direct(mixture)
         f["h1"].read_direct(h1)
@@ -228,8 +212,6 @@ def load_shard(path: str) -> dict:
         f["params1"].read_direct(params1)
         f["params2"].read_direct(params2)
     
-    t1 = perf_counter()
-    print(f"HDF5 READ: {t1 - t0:.2f}s")
 
     # Convert to float32 for efficient JAX training
     mixture = mixture.astype(np.float32)
@@ -238,15 +220,13 @@ def load_shard(path: str) -> dict:
     params1 = params1.astype(np.float32)
     params2 = params2.astype(np.float32)
 
-    t2 = perf_counter()
-    print(f"Type Convert Time: {t2 - t1:.2f}s")
-
+    t0 = perf_counter()
     # --- Preallocate arrays ---
     N = mixture.shape[0]
-    MIX = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
-    H1  = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
-    H2  = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
-    PSD = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.float32)
+    MIX = jnp.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
+    H1  = jnp.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
+    H2  = jnp.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
+    PSD = jnp.zeros((N, N_FRAMES, N_FREQ), dtype=np.float32)
 
     # --- Preprocess samples ---
     for i in range(N):
@@ -304,7 +284,8 @@ def batch_iterator(shard_paths: list,
         
         for start in range(0, N - batch_size + 1, batch_size):
             b  = idx[start : start + batch_size]
-            yield {
+            t0 = perf_counter()
+            batch = {
                 "mixture" : jnp.array(shard["mixture"][b]),
                 "h1"      : jnp.array(shard["h1"][b]),
                 "h2"      : jnp.array(shard["h2"][b]),
@@ -312,6 +293,10 @@ def batch_iterator(shard_paths: list,
                 "params1" : jnp.array(shard["params1"][b]),
                 "params2" : jnp.array(shard["params2"][b]),
             }
+            t1 = perf_counter()
+            print(f"Time taken to construct batch : {t1 - t0:.3f}s")
+            yield batch
+
 # -- 8. Dataset split --
 def get_shard_splits(data_dir: str,
                      train_frac: float = 0.8,
@@ -348,7 +333,12 @@ def get_shard_splits(data_dir: str,
     return train_paths, val_paths, test_paths
 
 # # -- 9. Sanity check --
-# if __name__ == "__main__":
+if __name__ == "__main__":
+    path = r"data/shard_0001.h5"
+    # with h5py.File(path, "r") as f:
+    #     for key in f.keys():
+    #         print(f"{key}: dtype={f[key].dtype}, shape={f[key].shape}")
+    load_shard(path)
 #     import sys
 #     data_dir = "/scratch/ph24mscs11029.ph.iith/gw_data/4s"
 #     paths = sorted(glob.glob(os.path.join(data_dir, "shard_*.h5")))
