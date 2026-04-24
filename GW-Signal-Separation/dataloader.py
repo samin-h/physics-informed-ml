@@ -19,7 +19,7 @@ SAMPLE_RATE = 4096 Hz
     
 N_SAMPLES_T = 16384
     Total samples per signal = 4s * 4096 = 16384
-    
+
 N_FFT = 512
     Window length in samples = 512 / 4096 = 125 ms.
     Frequency resolution = SAMPLE_RATE / N_FFT = 8 Hz per bin.
@@ -64,9 +64,14 @@ import glob
 import h5py
 import numpy as np
 import jax
+from jax.scipy.signal import convolve
+from time import perf_counter
 import jax.numpy as jnp
+from jax.scipy.signal import convolve
 from scipy.signal import get_window
+from scipy.ndimage import convolve1d
 from typing import Iterator
+from utils import timeit
 
 # -- 2. Constants --
 SAMPLE_RATE = 4096
@@ -88,11 +93,14 @@ PSD_SMOOTH = 15
 
 WINDOW = get_window(WIN_TYPE, N_FFT).astype(np.float32)
 
+isTimed = True  # If True will print the time taken by all the function
+
+
 # -- 3. STFT --
 def stft(x: np.ndarray) -> np.ndarray:
     """
     Compute Short-Time Fourier Transform.
-    
+
     Uses stride tricks to extract overlapping frames efficiently
     without copying the full array N_FRAMES times.
 
@@ -102,7 +110,6 @@ def stft(x: np.ndarray) -> np.ndarray:
     Returns:
         complex64 (N_FRAMES, N_BINS)
     """
-    x = x.astype(np.float32)
     frames = np.lib.stride_tricks.as_strided(
         x,
         shape = (N_FRAMES, N_FFT),
@@ -115,7 +122,7 @@ def stft(x: np.ndarray) -> np.ndarray:
 def estimate_psd(X: np.ndarray) -> np.ndarray:
     """
     Estimate non-stationary PSD via running mean over time frames.
-    
+
     Power at tile (t, f) = |x[t, f]|^2
     Smooth over PSD_SMOOTH frames to get stable noise floar.
 
@@ -132,6 +139,25 @@ def estimate_psd(X: np.ndarray) -> np.ndarray:
         axis=0, arr=power
     )
     return np.maximum(psd, 1e-40).astype(np.float32)
+
+def estimate_psd_fast(X: np.ndarray) -> jnp.ndarray:
+    """Vectorized PSD estimation."""
+    power = np.abs(X) ** 2
+    kernel = np.ones(PSD_SMOOTH) / PSD_SMOOTH
+    psd = convolve1d(power, weights=kernel, axis=0, mode="constant", cval=0)
+    return np.maximum(psd, 1e-40).astype(np.float32)
+
+
+@jax.jit
+def estimate_psd_jax(X: jnp.ndarray) -> jnp.ndarray:
+    """Jax Implementation of PSD Estimation"""
+    power = jnp.abs(X) ** 2
+    kernel = jnp.ones((PSD_SMOOTH,)) / PSD_SMOOTH
+    psd = jax.vmap(
+        lambda col: convolve(col, kernel, mode="same"), in_axes=1, out_axes=1
+    )(power)
+    return jnp.maximum(psd, 1e-40).astype(jnp.float32)
+
 
 # -- 4. Whiten + crop
 def whiten_and_crop(X: np.ndarray, psd: np.ndarray) -> np.ndarray:
@@ -150,7 +176,7 @@ def whiten_and_crop(X: np.ndarray, psd: np.ndarray) -> np.ndarray:
         psd : float32 (N_FRAMES, N_BINS)
     Returns:
         complex64 (N_FRAMES, N_FREQ)
-    """ 
+    """
     X_white = X / np.sqrt(psd)
     return X_white[:, F_LOW_BIN:F_HI_BIN].astype(np.complex64)
 
@@ -169,7 +195,8 @@ def preprocess_sample(mixture, h1, h2):
         psd_c  : float32 (N_FRAMES, N_FREQ) - PSD for unwhitening 
     """
     X_mix = stft(mixture.astype(np.float32))
-    psd   = estimate_psd(X_mix)
+    # psd   = estimate_psd(X_mix)
+    psd = estimate_psd_fast(X_mix)
     
     mix_w = whiten_and_crop(X_mix, psd)
     h1_w  = whiten_and_crop(stft(h1.astype(np.float32)), psd)
@@ -178,40 +205,13 @@ def preprocess_sample(mixture, h1, h2):
     
     return mix_w, h1_w, h2_w, psd_c
 
-# -- 6. Shard loader --
-# def load_shard(path: str) -> dict:
-#     """
-#     Load and preprocess all samples in one HDF5 shard.
-#     """
-#     with h5py.File(path, "r") as f:
-#         mixture = np.emptyf["mixture"][:].astype(np.float32)
-#         h1      = f["h1"][:].astype(np.float32)
-#         h2      = f["h2"][:].astrype(np.float32)
-#         params1 = f["params1"][:].astype(np.float32)
-#         params2 = f["params2"][:].astype(np.float32)
-    
-#     N   = mixture.shape[0]
-#     MIX = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
-#     H1  = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
-#     H2  = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
-#     PSD = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.float32)
-    
-#     for i in range(N):
-#         MIX[i], H1[i], H2[i], PSD[i] = preprocess_sample(mixture[i], h1[i], h2[i])
-        
-#     return {
-#         "mixture"  : MIX,
-#         "h1"       : H1,
-#         "h2"       : H2,
-#         "psd"      : PSD,
-#         "params1"  : params1, 
-#         "params2"  : params2,
-#     }
+
 def load_shard(path: str) -> dict:
     """
     Load and preprocess all samples in one HDF5 shard.
     Compatible with the JAX environment.
     """
+
     # --- Load raw data safely ---
     with h5py.File(path, "r") as f:
         mixture = np.empty(f["mixture"].shape, dtype=np.float64)
@@ -225,6 +225,7 @@ def load_shard(path: str) -> dict:
         f["h2"].read_direct(h2)
         f["params1"].read_direct(params1)
         f["params2"].read_direct(params2)
+    
 
     # Convert to float32 for efficient JAX training
     mixture = mixture.astype(np.float32)
@@ -233,6 +234,7 @@ def load_shard(path: str) -> dict:
     params1 = params1.astype(np.float32)
     params2 = params2.astype(np.float32)
 
+    t0 = perf_counter()
     # --- Preallocate arrays ---
     N = mixture.shape[0]
     MIX = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
@@ -245,7 +247,9 @@ def load_shard(path: str) -> dict:
         MIX[i], H1[i], H2[i], PSD[i] = preprocess_sample(
             mixture[i], h1[i], h2[i]
         )
-
+    t3 = perf_counter()
+    print(f"Preprocess {N} Sample Time: {t3 - t0:.2f}s")
+    print(f"Total Time: {t3-t0:.2f}s")
     return {
         "mixture": MIX,
         "h1": H1,
@@ -256,10 +260,12 @@ def load_shard(path: str) -> dict:
     }
     
 # -- 7. Batch iterator --
-def batch_iterator(shard_paths: list,
-                   batch_size: int = 8,
-                   shuffle: bool = True,
-                   rng: np.random.Generator = None) -> Iterator[dict]:
+def batch_iterator(
+    shard_paths: list,
+    batch_size: int = 8,
+    shuffle: bool = True,
+    rng: np.random.Generator = None,
+) -> Iterator[dict]:
     """
     Yield batches of JAX arrays for training.
     
@@ -284,7 +290,9 @@ def batch_iterator(shard_paths: list,
     
     for path in paths:
         print(f" Loading: {os.path.basename(path)}")
+        t0_ = perf_counter()
         shard = load_shard(path)
+        print(f"Finished Loading in {perf_counter() - t0_}")
         N     = shard["mixture"].shape[0]
         idx   = np.arange(N)
         if shuffle:
@@ -292,7 +300,8 @@ def batch_iterator(shard_paths: list,
         
         for start in range(0, N - batch_size + 1, batch_size):
             b  = idx[start : start + batch_size]
-            yield {
+            t0 = perf_counter()
+            batch = {
                 "mixture" : jnp.array(shard["mixture"][b]),
                 "h1"      : jnp.array(shard["h1"][b]),
                 "h2"      : jnp.array(shard["h2"][b]),
@@ -300,6 +309,10 @@ def batch_iterator(shard_paths: list,
                 "params1" : jnp.array(shard["params1"][b]),
                 "params2" : jnp.array(shard["params2"][b]),
             }
+            t1 = perf_counter()
+            print(f"Time taken to construct batch : {t1 - t0:.3f}s")
+            yield batch
+
 # -- 8. Dataset split --
 def get_shard_splits(data_dir: str,
                      train_frac: float = 0.8,
@@ -336,7 +349,12 @@ def get_shard_splits(data_dir: str,
     return train_paths, val_paths, test_paths
 
 # # -- 9. Sanity check --
-# if __name__ == "__main__":
+if __name__ == "__main__":
+    path = r"data/shard_0001.h5"
+    # with h5py.File(path, "r") as f:
+    #     for key in f.keys():
+    #         print(f"{key}: dtype={f[key].dtype}, shape={f[key].shape}")
+    load_shard(path)
 #     import sys
 #     data_dir = "/scratch/ph24mscs11029.ph.iith/gw_data/4s"
 #     paths = sorted(glob.glob(os.path.join(data_dir, "shard_*.h5")))
@@ -371,3 +389,33 @@ def get_shard_splits(data_dir: str,
 #     for k, v in batch.items():
 #         print(f" {k:10s}: {v.shape} {v.dtype}")
 #     get_shard_splits(data_dir)
+
+# -- 6. Shard loader --
+# def load_shard(path: str) -> dict:
+#     """
+#     Load and preprocess all samples in one HDF5 shard.
+#     """
+#     with h5py.File(path, "r") as f:
+#         mixture = np.emptyf["mixture"][:].astype(np.float32)
+#         h1      = f["h1"][:].astype(np.float32)
+#         h2      = f["h2"][:].astrype(np.float32)
+#         params1 = f["params1"][:].astype(np.float32)
+#         params2 = f["params2"][:].astype(np.float32)
+    
+#     N   = mixture.shape[0]
+#     MIX = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
+#     H1  = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
+#     H2  = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
+#     PSD = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.float32)
+    
+#     for i in range(N):
+#         MIX[i], H1[i], H2[i], PSD[i] = preprocess_sample(mixture[i], h1[i], h2[i])
+
+#     return {
+#         "mixture"  : MIX,
+#         "h1"       : H1,
+#         "h2"       : H2,
+#         "psd"      : PSD,
+#         "params1"  : params1, 
+#         "params2"  : params2,
+#     }

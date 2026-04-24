@@ -41,7 +41,7 @@ class Config:
     n_heads = 4
     
     # Training
-    batch_size = 8
+    batch_size = 64
     lr = 1e-3
     weight_decay = 1e-4
     n_epochs = 50
@@ -173,7 +173,7 @@ def train(data_dir, out_dir, resume=False, max_shards=None):
     rng = np.random.default_rng(0)
     
     print(f"\n{'='*55}")
-    print(f"GW Signal Separator Training")
+    print("GW Signal Separator Training")
     print(f" Epochs : {cfg.n_epochs}")
     print(f" Batch size : {cfg.batch_size}")
     print(f" LR : {cfg.lr}")
@@ -187,7 +187,7 @@ def train(data_dir, out_dir, resume=False, max_shards=None):
         print(f"Epoch {epoch + 1} / {cfg.n_epochs}")
         
         # Train 
-        print(f"  [Train]")
+        print("  [Train]")
         state, train_loss, _ = run_epoch(state, train_paths, rng,
                                          training=True)
         
@@ -244,7 +244,7 @@ def train(data_dir, out_dir, resume=False, max_shards=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=str,
-                        default="/scratch/ph24mscs11029.ph.iith/gw_data/4s")
+                        default="data/")
     parser.add_argument("--out-dir", type=str, default="./checkpoints")
     parser.add_argument("--epochs", type=int, default=cfg.n_epochs)
     parser.add_argument("--resume", action="store_true")
