@@ -138,7 +138,13 @@ def estimate_psd(X: np.ndarray) -> np.ndarray:
         lambda col: np.convolve(col, kernel, mode="same"),
         axis=0, arr=power
     )
-    return np.maximum(psd, 1e-40).astype(np.float32)
+    psd = np.maximum(psd, 1e-40)
+
+    whitened_power = power / psd
+    scale          = np.mean(whitened_power)
+    psd            = psd * scale
+
+    return psd.astype(np.float32)
 
 def estimate_psd_fast(X: np.ndarray) -> jnp.ndarray:
     """Vectorized PSD estimation."""
