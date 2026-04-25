@@ -360,7 +360,7 @@ def batch_iterator(
         
         for start in range(0, N - batch_size + 1, batch_size):
             b  = idx[start : start + batch_size]
-            t0 = perf_counter()
+            # t0 = perf_counter()
             batch = {
                 "mixture" : jnp.array(shard["mixture"][b]),
                 "h1"      : jnp.array(shard["h1"][b]),
@@ -369,8 +369,8 @@ def batch_iterator(
                 "params1" : jnp.array(shard["params1"][b]),
                 "params2" : jnp.array(shard["params2"][b]),
             }
-            t1 = perf_counter()
-            print(f"Time taken to construct batch : {t1 - t0:.3f}s")
+            # t1 = perf_counter()
+            # print(f"Time taken to construct batch : {t1 - t0:.3f}s")
             yield batch
 
 # -- 8. Dataset split --

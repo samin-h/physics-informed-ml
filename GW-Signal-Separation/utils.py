@@ -1,8 +1,8 @@
 from time import perf_counter
 from functools import wraps
-from typing import Any, Callable, TypeAlias
+from typing import Any, Callable
 
-F: TypeAlias = Callable[..., Any]
+F = Callable[..., Any]
 
 
 def timeit(enabled: bool) -> F:
