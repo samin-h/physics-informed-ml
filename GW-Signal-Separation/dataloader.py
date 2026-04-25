@@ -265,6 +265,50 @@ def load_shard(path: str) -> dict:
         "params2": params2,
     }
     
+def load_shard_jax(path: str) -> dict:
+    """
+    Load and preprocess all samples in one HDF5 shard.
+    Compatible with the JAX environment.
+    """
+
+    # --- Load raw data safely ---
+    with h5py.File(path, "r") as f:
+        mixture = np.empty(f["mixture"].shape, dtype=np.float64)
+        h1      = np.empty(f["h1"].shape, dtype=np.float64)
+        h2      = np.empty(f["h2"].shape, dtype=np.float64)
+        params1 = np.empty(f["params1"].shape, dtype=np.float64)
+        params2 = np.empty(f["params2"].shape, dtype=np.float64)
+
+        f["mixture"].read_direct(mixture)
+        f["h1"].read_direct(h1)
+        f["h2"].read_direct(h2)
+        f["params1"].read_direct(params1)
+        f["params2"].read_direct(params2)
+    
+
+    # Convert to float32 for efficient JAX training
+    mixture = mixture.astype(np.float32)
+    h1      = h1.astype(np.float32)
+    h2      = h2.astype(np.float32)
+    params1 = params1.astype(np.float32)
+    params2 = params2.astype(np.float32)
+
+    t0 = perf_counter()
+        
+    MIX, H1, H2, PSD = jax.vmap(preprocess_sample, in_axes=(0,0,0), out_axes=(0, 0, 0, 0))(mixture, h1, h2)
+
+
+    t3 = perf_counter()
+    print(f"Preprocess {N} Sample Time: {t3 - t0:.2f}s")
+    print(f"Total Time: {t3-t0:.2f}s")
+    return {
+        "mixture": MIX,
+        "h1": H1,
+        "h2": H2,
+        "psd": PSD,
+        "params1": params1,
+        "params2": params2,
+    }
 # -- 7. Batch iterator --
 def batch_iterator(
     shard_paths: list,
