@@ -146,12 +146,17 @@ def estimate_psd(X: np.ndarray) -> np.ndarray:
 
     return psd.astype(np.float32)
 
-def estimate_psd_fast(X: np.ndarray) -> jnp.ndarray:
+def estimate_psd_fast(X: np.ndarray) -> np.ndarray:
     """Vectorized PSD estimation."""
     power = np.abs(X) ** 2
     kernel = np.ones(PSD_SMOOTH) / PSD_SMOOTH
     psd = convolve1d(power, weights=kernel, axis=0, mode="constant", cval=0)
-    return np.maximum(psd, 1e-40).astype(np.float32)
+    psd = np.maximum(psd, 1e-40)
+
+    whitened_power = power / psd
+    scale          = np.mean(whitened_power)
+    psd            = psd * scale
+    return psd.astype(np.float32)
 
 
 @jax.jit
@@ -162,7 +167,12 @@ def estimate_psd_jax(X: jnp.ndarray) -> jnp.ndarray:
     psd = jax.vmap(
         lambda col: convolve(col, kernel, mode="same"), in_axes=1, out_axes=1
     )(power)
-    return jnp.maximum(psd, 1e-40).astype(jnp.float32)
+    psd = jnp.maximum(psd, 1e-40)
+
+    whitened_power = power / psd
+    scale          = jnp.mean(whitened_power)
+    psd            = psd * scale
+    return psd
 
 
 # -- 4. Whiten + crop
@@ -240,7 +250,7 @@ def load_shard(path: str) -> dict:
     params1 = params1.astype(np.float32)
     params2 = params2.astype(np.float32)
 
-    t0 = perf_counter()
+    # t0 = perf_counter()
     # --- Preallocate arrays ---
     N = mixture.shape[0]
     MIX = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
@@ -253,9 +263,9 @@ def load_shard(path: str) -> dict:
         MIX[i], H1[i], H2[i], PSD[i] = preprocess_sample(
             mixture[i], h1[i], h2[i]
         )
-    t3 = perf_counter()
-    print(f"Preprocess {N} Sample Time: {t3 - t0:.2f}s")
-    print(f"Total Time: {t3-t0:.2f}s")
+    # t3 = perf_counter()
+    # print(f"Preprocess {N} Sample Time: {t3 - t0:.2f}s")
+    # print(f"Total Time: {t3-t0:.2f}s")
     return {
         "mixture": MIX,
         "h1": H1,
