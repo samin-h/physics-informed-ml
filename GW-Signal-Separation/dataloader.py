@@ -71,6 +71,7 @@ from jax.scipy.signal import convolve
 from scipy.signal import get_window
 from scipy.ndimage import convolve1d
 from typing import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from utils import timeit
 
 # -- 2. Constants --
@@ -221,13 +222,14 @@ def preprocess_sample(mixture, h1, h2):
     
     return mix_w, h1_w, h2_w, psd_c
 
-
+@timeit(enabled=isTimed)
 def load_shard(path: str) -> dict:
     """
     Load and preprocess all samples in one HDF5 shard.
     Compatible with the JAX environment.
     """
 
+    # t0 = perf_counter()
     # --- Load raw data safely ---
     with h5py.File(path, "r") as f:
         mixture = np.empty(f["mixture"].shape, dtype=np.float64)
@@ -250,7 +252,7 @@ def load_shard(path: str) -> dict:
     params1 = params1.astype(np.float32)
     params2 = params2.astype(np.float32)
 
-    # t0 = perf_counter()
+ 
     # --- Preallocate arrays ---
     N = mixture.shape[0]
     MIX = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
@@ -373,6 +375,73 @@ def batch_iterator(
             # print(f"Time taken to construct batch : {t1 - t0:.3f}s")
             yield batch
 
+def batch_iterator_prefetch(
+    shard_paths: list,
+    batch_size: int = 8,
+    shuffle: bool = True,
+    rng: np.random.Generator = None,
+    num_workers: int = 2
+) -> Iterator[dict]:
+    """
+    Prefetch the next file and Yield current batches of JAX arrays for training.
+    
+    Loads one shard at a time
+    GPU sees one batch at a time.
+
+    Args:
+        shard_paths : list of HDF5 file paths
+        batch_size  : samples per batch
+        shuffle     : shuffle shard order and samples
+        rng.        : numpy random generator
+        num_workers : number of threads for loading files
+
+    Yields:
+        dict of JAX arrays on GPU
+    """
+    executor = ThreadPoolExecutor(max_workers=num_workers)
+    if rng is None:
+        rng = np.random.default_rng()
+    
+    paths = list(shard_paths)
+    if shuffle:
+        rng.shuffle(paths)
+    print(paths)
+    
+    futures = executor.submit(load_shard, paths[0])
+
+    for i in range(len((paths))):
+        print(f" Loading: {os.path.basename(paths[i])}")        
+        # Get Current Shard
+        shard = futures.result()
+        shard = jax.device_put(shard)
+
+        if i + 1 < len(paths):
+            futures = executor.submit(load_shard, paths[i+1])
+            
+        
+        N     = shard["mixture"].shape[0]
+        idx   = np.arange(N)
+        if shuffle:
+            rng.shuffle(idx)
+        idx=jnp.array(idx)
+
+        for start in range(0, N - batch_size + 1, batch_size):
+            b  = idx[start : start + batch_size]
+            # t0 = perf_counter()
+            batch = {
+                "mixture" : shard["mixture"][b],
+                "h1"      : shard["h1"][b],
+                "h2"      : shard["h2"][b],
+                "psd"     : shard["psd"][b],
+                "params1" : shard["params1"][b],
+                "params2" : shard["params2"][b],
+            }
+            # t1 = perf_counter()
+            # print(f"Time taken to construct batch : {t1 - t0:.3f}s")
+            yield batch
+        
+    executor.shutdown()
+
 # -- 8. Dataset split --
 def get_shard_splits(data_dir: str,
                      train_frac: float = 0.8,
@@ -410,11 +479,21 @@ def get_shard_splits(data_dir: str,
 
 # # -- 9. Sanity check --
 if __name__ == "__main__":
-    path = r"data/shard_0001.h5"
+    path = [r"data/shard_0001.h5", r"data/shard_0001.h5"]
     # with h5py.File(path, "r") as f:
     #     for key in f.keys():
     #         print(f"{key}: dtype={f[key].dtype}, shape={f[key].shape}")
-    load_shard(path)
+    for _ in range(3):
+        t0 = perf_counter()
+        for i in batch_iterator(path):
+            pass
+        t1 = perf_counter()
+        
+        for i in batch_iterator_prefetch(path):
+            pass
+        t2 = perf_counter()
+        print(f"Time taken by batch iterator: {t1 - t0:.6f}s")
+        print(f"Time taken by batch iterator prefetch: {t2 - t1:.6f}s")
 #     import sys
 #     data_dir = "/scratch/ph24mscs11029.ph.iith/gw_data/4s"
 #     paths = sorted(glob.glob(os.path.join(data_dir, "shard_*.h5")))

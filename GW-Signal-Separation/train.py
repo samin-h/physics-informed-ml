@@ -27,8 +27,9 @@ import optax
 from flax.training import train_state, checkpoints
 
 from model import GWSeparator
-from dataloader import (batch_iterator, get_shard_splits, N_FRAMES, N_FREQ)
+from dataloader import (batch_iterator_prefetch, get_shard_splits, N_FRAMES, N_FREQ)
 from loss import compute_loss, compute_metrics
+from utils import timeit
 
 # -- 2. Config --
 class Config:
@@ -102,11 +103,12 @@ def eval_step(state, mixture, targets):
     return loss, preds
 
 # -- 5. Epoch --
+@timeit(enabled=True)
 def run_epoch(state, shard_paths, rng, training=True):
     total_loss, n_batches = 0.0, 0
     si_snrs, rhos = [], []
     
-    it = batch_iterator(shard_paths, cfg.batch_size,
+    it = batch_iterator_prefetch(shard_paths, cfg.batch_size,
                         shuffle=training, rng=rng)
     
     for batch in it:
@@ -124,7 +126,7 @@ def run_epoch(state, shard_paths, rng, training=True):
         total_loss += float(loss)
         n_batches += 1
         
-        if training and n_batches % cfg.log_every == 0 :
+        if n_batches % cfg.log_every == 0 :
             print(f"  batch {n_batches:5d} | loss {float(loss):.4f}")
             
     mean_loss = total_loss / max(n_batches, 1)
