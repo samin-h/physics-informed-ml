@@ -2,7 +2,7 @@
 GW Signal Separation - Model
 =============================
 
-Complex-domian encoder-bottleneck-decoder architecture.
+Complex-domain encoder-bottleneck-decoder architecture.
 
 Input  : complex64 (B, T, F)  = (B, 62, 126) - whitened mixture spectrogram
 Output : complex64 (B, N, T, F) = (B, 2, 62, 126) - separated sources
@@ -60,7 +60,7 @@ class ComplexLinear(nn.Module):
         W_i = nn.Dense(self.features, use_bias=self.use_bias, name="W_i")
         
         out_r = W_r(z_r) - W_i(z_i)
-        out_i = W_r(z_i) - W_i(z_r)
+        out_i = W_r(z_i) + W_i(z_r)
         
         return out_r + 1j * out_i
 
@@ -151,7 +151,7 @@ class AttentionBottleneck(nn.Module):
                                    (B, self.n_sources, T, d))
         z_expanded = jnp.broadcast_to(z[:, None, :, :],
                                       (B, self.n_sources, T, d))
-        return z_expanded + context   # (B, N, T, d)
+        return z_expanded + 0.5 * context   # (B, N, T, d)
     
 # -- 6. Complex Decoder --
 class ComplexDecoder (nn.Module):
@@ -235,47 +235,48 @@ class GWSeparator(nn.Module):
         
         # Apply complex ratio mask to mixture
         x_expanded = jnp.broadcast_to(x[:, None, :, :], masks.shape)
+        masks      = jnp.tanh(masks.real) + 1j * jnp.tanh(masks.imag)
         return masks * x_expanded   # (B, N, T, F)
 
-# # -- 8. Shape check --   
-# if __name__ == "__main__":
-#     import jax.random as jr
-#     from load import N_FRAMES, N_FREQ
+# -- 8. Shape check --   
+if __name__ == "__main__":
+    import jax.random as jr
+    from load import N_FRAMES, N_FREQ
 
-#     B, N = 2, 2
-#     model = GWSeparator(
-#         n_sources=N,
-#         n_freqs=N_FREQ,
-#         encoder_dims=[256, 256],
-#         decoder_dims=[256, 256],
-#         latent_dim=128,
-#         n_heads=4,
-#     )
+    B, N = 2, 2
+    model = GWSeparator(
+        n_sources=N,
+        n_freqs=N_FREQ,
+        encoder_dims=[256, 256],
+        decoder_dims=[256, 256],
+        latent_dim=128,
+        n_heads=4,
+    )
 
-#     key = jr.PRNGKey(0)
+    key = jr.PRNGKey(0)
 
-#     # Generate complex input
-#     x_r = jr.normal(key, (B, N_FRAMES, N_FREQ))
-#     x_i = jr.normal(jr.fold_in(key, 1), (B, N_FRAMES, N_FREQ))
-#     x = (x_r + 1j * x_i).astype(jnp.complex64)
+    # Generate complex input
+    x_r = jr.normal(key, (B, N_FRAMES, N_FREQ))
+    x_i = jr.normal(jr.fold_in(key, 1), (B, N_FRAMES, N_FREQ))
+    x = (x_r + 1j * x_i).astype(jnp.complex64)
 
-#     # Initialize model parameters
-#     params = model.init(key, x)
+    # Initialize model parameters
+    params = model.init(key, x)
 
-#     # Forward pass
-#     out = model.apply(params, x)
+    # Forward pass
+    out = model.apply(params, x)
 
-#     # Print shapes
-#     print(f"Input  : {x.shape} {x.dtype}")
-#     print(f"Output : {out.shape} {out.dtype}")
-#     print(f"Expected: ({B}, {N}, {N_FRAMES}, {N_FREQ})")
+    # Print shapes
+    print(f"Input  : {x.shape} {x.dtype}")
+    print(f"Output : {out.shape} {out.dtype}")
+    print(f"Expected: ({B}, {N}, {N_FRAMES}, {N_FREQ})")
 
-#     # Count parameters
-#     n_params = sum(p.size for p in jax.tree_util.tree_leaves(params))
-#     print(f"Parameters: {n_params:,}")
+    # Count parameters
+    n_params = sum(p.size for p in jax.tree_util.tree_leaves(params))
+    print(f"Parameters: {n_params:,}")
 
-#     # Assertions
-#     assert out.shape == (B, N, N_FRAMES, N_FREQ)
-#     assert out.dtype == jnp.complex64
+    # Assertions
+    assert out.shape == (B, N, N_FRAMES, N_FREQ)
+    assert out.dtype == jnp.complex64
 
-#     print("\nAll checks passed.")
+    print("\nAll checks passed.")

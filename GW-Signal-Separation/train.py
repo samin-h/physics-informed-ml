@@ -182,6 +182,8 @@ def train(data_dir, out_dir, resume=False, max_shards=None):
     print(f" Val shards : {len(val_paths)}")
     print(f"{'='*55}\n")
     
+    # -- Epochs --
+    
     for epoch in range(start_epoch, cfg.n_epochs):
         t0 = time.time()
         print(f"Epoch {epoch + 1} / {cfg.n_epochs}")
@@ -216,23 +218,29 @@ def train(data_dir, out_dir, resume=False, max_shards=None):
         # Save best
         if val_loss < best_val:
             best_val = val_loss
+            best_epoch = epoch + 1
             checkpoints.save_checkpoint(out_dir, state, epoch+1,
                                         prefix="ckpt_epoch_",
-                                        overwrite=True, keep=3)
+                                        overwrite=False, keep=3)
             print(f" *** Best model saved (val_loss = {best_val:.4f}) ***\n")
         
         elif (epoch + 1) % cfg.save_every == 0:
             checkpoints.save_checkpoint(out_dir, state, epoch + 1,
                                        prefix = "ckpt_epoch_",
-                                       overwrite=True, keep=3)
-            
+                                       overwrite=False, keep=3)
+        print()
+        
     # Test
     print("Test set evaluation:")
+    
+    state = checkpoints.restore_checkpoint(out_dir, state, prefix="ckpt_epoch_")
     _, test_loss, test_m = run_epoch(state, test_paths, rng, training=False)
     print(f" test_loss : {test_loss:.4f}")
     print(f" test_SI-SNR: {test_m.get('si_snr_db', 0):.2f} dB")
     print(f" test_rho : {test_m.get('overlap_rho', 0):.4f}")
     
+    history["best_epoch"] = best_epoch
+    history["best_val_loss"] = float(best_val)
     history["test_loss"] = float(test_loss)
     history["test_sisnr"] = test_m.get("si_snr_db", 0.0)
     history["test_rho"] = test_m.get("overlap_rho", 0.0)
