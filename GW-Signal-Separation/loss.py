@@ -52,7 +52,7 @@ def si_snr_loss(pred: jnp.ndarray, target: jnp.ndarray,
     
     # Zero-mean
     s     = s - jnp.mean(s)
-    s_hat = s_hat - jnp.mean(s)
+    s_hat = s_hat - jnp.mean(s_hat)
     
     # Project prediction onto target
     dot = jnp.real(jnp.dot(jnp.conj(s_hat), s))
@@ -89,10 +89,11 @@ def matched_filter_loss(pred: jnp.ndarray, target: jnp.ndarray,
     norm_h = jnp.real(jnp.dot(jnp.conj(h), h)) + eps
     
     rho = cross / jnp.sqrt(norm_hat * norm_h)
+    rho = jnp.clip(rho, -1.0, 1.0)
     return 1.0 - rho ** 2
 
 # -- 4. PIT loss for one sample --
-def pit_loss_sigle(preds: jnp.ndarray, targets: jnp.ndarray,
+def pit_loss_single(preds: jnp.ndarray, targets: jnp.ndarray,
                    alpha: float = 0.5) -> jnp.ndarray:
     """
     PIT loss for one sample: try all permutations, take minimum.
@@ -133,7 +134,7 @@ def batch_loss(preds: jnp.ndarray, targets: jnp.ndarray,
     """
     
     per_sample = jax.vmap(
-        lambda p, t: pit_loss_sigle(p, t, alpha)
+        lambda p, t: pit_loss_single(p, t, alpha)
     )(preds, targets)
     return jnp.mean(per_sample)
 

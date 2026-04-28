@@ -64,7 +64,7 @@ import glob
 import h5py
 import numpy as np
 import jax
-from jax.scipy.signal import convolve
+
 from time import perf_counter
 import jax.numpy as jnp
 from jax.scipy.signal import convolve
@@ -86,7 +86,7 @@ BIN_RES  = SAMPLE_RATE / N_FFT
 
 # GW signal band: 20 - 1024 Hz
 F_LOW_BIN  = int(np.ceil(20.0 / BIN_RES))
-F_HI_BIN   = int(float(1024.0 / BIN_RES)) + 1
+F_HI_BIN   = int(np.floor(1024.0 / BIN_RES)) + 1
 N_FREQ     = F_HI_BIN - F_LOW_BIN
 
 PSD_SMOOTH = 15
