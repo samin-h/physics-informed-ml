@@ -80,7 +80,7 @@ from utils import timeit
 SAMPLE_RATE = 4096
 N_SAMPLES_T = 16384
 N_FFT = 512
-HOP = 256
+HOP = 128
 WIN_TYPE = "hann"
 
 N_FRAMES = (N_SAMPLES_T - N_FFT) // HOP + 1
