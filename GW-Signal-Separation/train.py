@@ -39,7 +39,7 @@ class Config:
     n_freqs = N_FREQ
     encoder_dims = [256, 256]
     decoder_dims = [256, 256]
-    latent_dim = 128
+    latent_dim = 512  
     n_heads = 4
 
     # Training
