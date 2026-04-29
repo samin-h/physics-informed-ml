@@ -36,6 +36,7 @@ import jax.numpy as jnp
 PERMS_2 = [(0, 1), (1, 0)]
 
 # -- 2. SI-SNR --
+@jax.jit
 def si_snr_loss(pred: jnp.ndarray, target: jnp.ndarray,
                 eps: float = 1e-8) -> jnp.ndarray:
     """
@@ -68,6 +69,7 @@ def si_snr_loss(pred: jnp.ndarray, target: jnp.ndarray,
     return -10.0 * jnp.log10(signal_power / noise_power)
 
 # -- 3. Matched Filter Loss --
+@jax.jit
 def matched_filter_loss(pred: jnp.ndarray, target: jnp.ndarray,
                         eps: float = 1e-8) -> jnp.ndarray:
     """
@@ -93,6 +95,7 @@ def matched_filter_loss(pred: jnp.ndarray, target: jnp.ndarray,
     return 1.0 - rho ** 2
 
 # -- 4. PIT loss for one sample --
+@jax.jit
 def pit_loss_single(preds: jnp.ndarray, targets: jnp.ndarray,
                    alpha: float = 0.5) -> jnp.ndarray:
     """
@@ -119,6 +122,7 @@ def pit_loss_single(preds: jnp.ndarray, targets: jnp.ndarray,
     return best_loss
 
 # -- 5. Batch loss --
+@jax.jit
 def batch_loss(preds: jnp.ndarray, targets: jnp.ndarray,
                alpha: float = 0.5) -> jnp.ndarray:
     """
@@ -143,35 +147,69 @@ def compute_loss(preds, targets, alpha=0.5):
     return batch_loss(preds, targets, alpha)
 
 # -- 6. Evaluation metrics --
+# @jax.jit
+# def compute_metrics(preds: jnp.ndarray, targets: jnp.ndarray) -> dict:
+#     """
+#     Compute SI-SNR and overlap rho for evalution (not training).
+#     Args:
+#         preds, targets : complex64 (B, N, T, F)
+        
+#     Returns:
+#         dick: si_snr_db, overlap_rho
+#     """ 
+#     B, N, T, F = preds.shape
+#     si_snrs, rhos = [], []
+    
+#     for b in range(B):
+#         best_sisnr, best_rho = -jnp.inf, 0.0
+#         for perm in PERMS_2:
+#             s, r = 0.0 , 0.0
+#             for i, j in enumerate(perm):
+#                 s += -si_snr_loss(preds[b, i], targets[b, j])
+#                 r += 1.0 - matched_filter_loss(preds[b, i], targets[b, j])
+                
+#             if s > best_sisnr:
+#                 best_sisnr = s / N
+#                 best_rho   = r / N
+#         si_snrs.append(float(best_sisnr))
+#         rhos.append(float(best_rho))
+        
+#     return {
+#         "si_snr_db" : float(jnp.mean(jnp.array(si_snrs))),
+#         "overlap_rho" : float(jnp.mean(jnp.array(rhos))),
+#     }
+    
+@jax.jit
 def compute_metrics(preds: jnp.ndarray, targets: jnp.ndarray) -> dict:
     """
-    Compute SI-SNR and overlap rho for evalution (not training).
+    Compute SI-SNR and overlap rho for evaluation.
     Args:
         preds, targets : complex64 (B, N, T, F)
+    """
+    # 1. Define the logic for a SINGLE sample in the batch
+    def process_single_item(p, t):
+        # Permutation 1: (0, 0) and (1, 1)
+        s1 = (-si_snr_loss(p[0], t[0]) - si_snr_loss(p[1], t[1])) / 2.0
+        r1 = (2.0 - matched_filter_loss(p[0], t[0]) - matched_filter_loss(p[1], t[1])) / 2.0
         
-    Returns:
-        dick: si_snr_db, overlap_rho
-    """ 
-    B, N, T, F = preds.shape
-    si_snrs, rhos = [], []
+        # Permutation 2: (0, 1) and (1, 0)
+        s2 = (-si_snr_loss(p[0], t[1]) - si_snr_loss(p[1], t[0])) / 2.0
+        r2 = (2.0 - matched_filter_loss(p[0], t[1]) - matched_filter_loss(p[1], t[0])) / 2.0
+        
+        # JAX equivalent of "if s1 > s2:"
+        best_s = jnp.where(s1 > s2, s1, s2)
+        best_r = jnp.where(s1 > s2, r1, r2)
+        
+        return best_s, best_r
+
+    # 2. Vectorize the single-item function across the batch dimension (axis 0)
+    # This completely eliminates the need for `for b in range(B)`
+    batch_s, batch_r = jax.vmap(process_single_item)(preds, targets)
     
-    for b in range(B):
-        best_sisnr, best_rho = -jnp.inf, 0.0
-        for perm in PERMS_2:
-            s, r = 0.0 , 0.0
-            for i, j in enumerate(perm):
-                s += -si_snr_loss(preds[b, i], targets[b, j])
-                r += 1.0 - matched_filter_loss(preds[b, i], targets[b, j])
-                
-            if s > best_sisnr:
-                best_sisnr = s / N
-                best_rho   = r / N
-        si_snrs.append(float(best_sisnr))
-        rhos.append(float(best_rho))
-        
+    # 3. Return JAX arrays (do NOT cast to float() inside jit)
     return {
-        "si_snr_db" : float(jnp.mean(jnp.array(si_snrs))),
-        "overlap_rho" : float(jnp.mean(jnp.array(rhos))),
+        "si_snr_db": jnp.mean(batch_s),
+        "overlap_rho": jnp.mean(batch_r),
     }
     
 # -- 7. Sanity check --

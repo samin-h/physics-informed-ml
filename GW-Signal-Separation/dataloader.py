@@ -118,7 +118,54 @@ def stft(x: np.ndarray) -> np.ndarray:
     ).copy()
     frames *= WINDOW
     return np.fft.rfft(frames, n=N_FFT, axis = -1).astype(np.complex64)
+@jax.jit
+def stft_jax(x: jnp.ndarray, WINDOW: jnp.ndarray = jnp.asarray(WINDOW)) -> jnp.ndarray:
+    """
+    Compute the Short-Time Fourier Transform (STFT) of a 1D signal using JAX.
 
+    This implementation extracts overlapping frames using
+    `jax.lax.conv_general_dilated_patches`, which is the JAX-equivalent of
+    sliding-window (stride-based) framing. Each frame is then windowed and
+    transformed using a real FFT.
+
+    Parameters
+    ----------
+    x : jnp.ndarray, shape (N_SAMPLES_T,)
+        Input 1D time-domain signal.
+
+    WINDOW : jnp.ndarray, shape (N_FFT,)
+        Window function applied to each frame (e.g., Hann or Hamming).
+        Must match the frame length `N_FFT`.
+
+    Returns
+    -------
+    jnp.ndarray, shape (N_FRAMES, N_FFT // 2 + 1), dtype=complex64
+        STFT of the input signal. Each row corresponds to the FFT of one frame.
+
+    Notes
+    -----
+    - Frames are extracted with:
+        - frame length = `N_FFT`
+        - hop size = `HOP`
+        - padding = "VALID" (no implicit padding; only full frames are used)
+    - Internally, patches are returned in a flattened convolution layout and
+      transposed to obtain shape (N_FRAMES, N_FFT).
+    - This function is compatible with `jax.jit` and can be efficiently batched
+      using `jax.vmap`.
+    - The FFT is computed using `jnp.fft.rfft`, returning only non-negative
+      frequency components.
+
+    """
+    x = x[jnp.newaxis, jnp.newaxis, :]  # (N, C, H)
+    patches = jax.lax.conv_general_dilated_patches(
+        x,
+        filter_shape=(N_FFT,),
+        window_strides=(HOP,),
+        padding="VALID"
+    )
+    frames = patches[0].T
+    frames *= WINDOW
+    return jnp.fft.rfft(frames, n=N_FFT, axis = -1).astype(jnp.complex64)
 # -- 4. PSD estimation --
 def estimate_psd(X: np.ndarray) -> np.ndarray:
     """
@@ -197,6 +244,26 @@ def whiten_and_crop(X: np.ndarray, psd: np.ndarray) -> np.ndarray:
     X_white = X / np.sqrt(psd)
     return X_white[:, F_LOW_BIN:F_HI_BIN].astype(np.complex64)
 
+def whiten_and_crop_jax(X: jnp.ndarray, psd: jnp.ndarray) -> jnp.ndarray:
+    """
+    Jax implementation of Whiten spectrogram and crop to GW signal band.
+    
+    Whitening: divide by sqrt (PSD) at each tile.
+    After whitening, Gaussian noise has unit variance everywhere.
+    The network sees a flat noise floar and learns signal structure.
+    
+    All signals (mixture, h1, h2) are whitened with the SAME
+    mixture PSD so they all live in the same domain.
+    
+    Args:
+        X   : complex64 (N_FRAMES, N_BINS)
+        psd : float32 (N_FRAMES, N_BINS)
+    Returns:
+        complex64 (N_FRAMES, N_FREQ)
+    """
+    X_white = X / jnp.sqrt(psd)
+    return X_white[:, F_LOW_BIN:F_HI_BIN].astype(jnp.complex64)
+
 # -- 5. Full preprocessing for one sample
 def preprocess_sample(mixture, h1, h2):
     """
@@ -221,6 +288,30 @@ def preprocess_sample(mixture, h1, h2):
     psd_c = psd[:, F_LOW_BIN:F_HI_BIN].astype(np.float32)
     
     return mix_w, h1_w, h2_w, psd_c
+@jax.jit
+def preprocess_sample_jax(mixture, h1, h2):
+    """
+    STFT + PSD estimate + whiten + crop for one sample.
+
+    Args:
+        mixture, h1, h2 : float64 (N_SAMPLES_T,)
+    
+    Returns:
+        mix_w  : complex64 (N_FRAMES, N_FREQ) - model input
+        h1_w   : complex64 (N_FRAMES, N_FREQ) - target 1
+        h2_w   : complex64 (N_FRAMES, N_FREQ) - target 2
+        psd_c  : float32 (N_FRAMES, N_FREQ) - PSD for unwhitening 
+    """
+    X_mix = stft_jax(mixture)
+    # psd   = estimate_psd(X_mix)
+    psd = estimate_psd_jax(X_mix)
+    
+    mix_w = whiten_and_crop_jax(X_mix, psd)
+    h1_w  = whiten_and_crop_jax(stft_jax(h1), psd)
+    h2_w  = whiten_and_crop_jax(stft_jax(h2), psd)
+    psd_c = psd[:, F_LOW_BIN:F_HI_BIN].astype(np.float32)
+    
+    return mix_w, h1_w, h2_w, psd_c
 
 @timeit(enabled=isTimed)
 def load_shard(path: str) -> dict:
@@ -229,7 +320,6 @@ def load_shard(path: str) -> dict:
     Compatible with the JAX environment.
     """
 
-    # t0 = perf_counter()
     # --- Load raw data safely ---
     with h5py.File(path, "r") as f:
         mixture = np.empty(f["mixture"].shape, dtype=np.float64)
@@ -253,6 +343,7 @@ def load_shard(path: str) -> dict:
     params2 = params2.astype(np.float32)
 
  
+    #t0 = perf_counter()
     # --- Preallocate arrays ---
     N = mixture.shape[0]
     MIX = np.zeros((N, N_FRAMES, N_FREQ), dtype=np.complex64)
@@ -277,50 +368,7 @@ def load_shard(path: str) -> dict:
         "params2": params2,
     }
     
-def load_shard_jax(path: str) -> dict:
-    """
-    Load and preprocess all samples in one HDF5 shard.
-    Compatible with the JAX environment.
-    """
 
-    # --- Load raw data safely ---
-    with h5py.File(path, "r") as f:
-        mixture = np.empty(f["mixture"].shape, dtype=np.float64)
-        h1      = np.empty(f["h1"].shape, dtype=np.float64)
-        h2      = np.empty(f["h2"].shape, dtype=np.float64)
-        params1 = np.empty(f["params1"].shape, dtype=np.float64)
-        params2 = np.empty(f["params2"].shape, dtype=np.float64)
-
-        f["mixture"].read_direct(mixture)
-        f["h1"].read_direct(h1)
-        f["h2"].read_direct(h2)
-        f["params1"].read_direct(params1)
-        f["params2"].read_direct(params2)
-    
-
-    # Convert to float32 for efficient JAX training
-    mixture = mixture.astype(np.float32)
-    h1      = h1.astype(np.float32)
-    h2      = h2.astype(np.float32)
-    params1 = params1.astype(np.float32)
-    params2 = params2.astype(np.float32)
-
-    t0 = perf_counter()
-        
-    MIX, H1, H2, PSD = jax.vmap(preprocess_sample, in_axes=(0,0,0), out_axes=(0, 0, 0, 0))(mixture, h1, h2)
-
-
-    t3 = perf_counter()
-    print(f"Preprocess {N} Sample Time: {t3 - t0:.2f}s")
-    print(f"Total Time: {t3-t0:.2f}s")
-    return {
-        "mixture": MIX,
-        "h1": H1,
-        "h2": H2,
-        "psd": PSD,
-        "params1": params1,
-        "params2": params2,
-    }
 # -- 7. Batch iterator --
 def batch_iterator(
     shard_paths: list,
@@ -479,21 +527,41 @@ def get_shard_splits(data_dir: str,
 
 # # -- 9. Sanity check --
 if __name__ == "__main__":
-    path = [r"data/shard_0001.h5", r"data/shard_0001.h5"]
+    path1 = [r"data/shard_0001.h5", r"data/shard_0002.h5"]
+    path2 = [r"data/shard_0001.h5", r"data/shard_0002.h5", r"data/shard_0003.h5", r"data/shard_0004.h5", r"data/shard_0005.h5"]
+    for data in data_prefetcher(path2, num_workers=2):
+        mix , h1, h2, params1, params2 = data
+        print(f"mix: {mix.shape}")
+        print(f"h1: {h1.shape}")
+        print(f"h2: {h2.shape}")
+        print(f"params1: {params1.shape}")
+        print(f"params2: {params2.shape}")
+        print(f"mix: {mix.shape}")
+    # load_shard(path)
+    # load_shard_jax(path)
+    # load_shard_jax(path)
+
     # with h5py.File(path, "r") as f:
-    #     for key in f.keys():
-    #         print(f"{key}: dtype={f[key].dtype}, shape={f[key].shape}")
-    for _ in range(3):
-        t0 = perf_counter()
-        for i in batch_iterator(path):
-            pass
-        t1 = perf_counter()
+    #   x = np.empty(f["mixture"].shape)
+    #   f["mixture"].read_direct(x)
+
+    # y1 = stft(x[0])
+    # print(x.shape)
+    # print(y1.shape, y1.dtype)
+    # x = jnp.array(x[0])
+    # y2 = stft_jax(x) 
+    # print(y2.shape, y2.dtype) 
+    # for _ in range(3):
+    #     t0 = perf_counter()
+    #     for i in batch_iterator(path):
+    #         pass
+    #     t1 = perf_counter()
         
-        for i in batch_iterator_prefetch(path):
-            pass
-        t2 = perf_counter()
-        print(f"Time taken by batch iterator: {t1 - t0:.6f}s")
-        print(f"Time taken by batch iterator prefetch: {t2 - t1:.6f}s")
+    #     for i in batch_iterator_prefetch(path):
+    #         pass
+    #     t2 = perf_counter()
+    #     print(f"Time taken by batch iterator: {t1 - t0:.6f}s")
+    #     print(f"Time taken by batch iterator prefetch: {t2 - t1:.6f}s")
 #     import sys
 #     data_dir = "/scratch/ph24mscs11029.ph.iith/gw_data/4s"
 #     paths = sorted(glob.glob(os.path.join(data_dir, "shard_*.h5")))
