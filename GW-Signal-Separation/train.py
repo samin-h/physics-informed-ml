@@ -37,21 +37,21 @@ class Config:
     # Model
     n_sources = 2
     n_freqs = N_FREQ
-    encoder_dims = [256, 256]
-    decoder_dims = [256, 256]
+    encoder_dims = [512, 512, 256, 128]
+    decoder_dims = [128, 256, 512, 512]
     latent_dim = 512  
-    n_heads = 4
+    n_heads = 8
 
     # Training
     batch_size = 80
-    lr = 1e-3
+    lr = 3e-4
     weight_decay = 1e-4
     n_epochs = 50
-    alpha_mf = 0.5
+    alpha_mf = 0.7
 
     # LR schedule
-    warmup_steps = 50
-    decay_steps = 50000
+    warmup_steps = 200
+    decay_steps = 100000
 
     # Logging
     save_every = 5  # checkpoint every N epochs
