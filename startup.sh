@@ -1,5 +1,5 @@
 #!/bin/bash
-
+unalias python
 unset LD_LIBRARY_PATH
 unset PYTHONPATH
 
