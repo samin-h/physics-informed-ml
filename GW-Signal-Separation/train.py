@@ -27,7 +27,7 @@ import optax
 from flax.training import train_state, checkpoints
 
 from model import GWSeparator
-from dataloader import (batch_iterator_prefetch, get_shard_splits, N_FRAMES, N_FREQ)
+from dataloader2 import (batch_iterator, get_shard_splits, N_FRAMES, N_FREQ)
 from loss import compute_loss, compute_metrics
 from utils import timeit
 
@@ -42,7 +42,7 @@ class Config:
     n_heads = 4
     
     # Training
-    batch_size = 64
+    batch_size = 80
     lr = 1e-3
     weight_decay = 1e-4
     n_epochs = 50
@@ -108,7 +108,7 @@ def run_epoch(state, shard_paths, rng, training=True):
     total_loss, n_batches = 0.0, 0
     si_snrs, rhos = [], []
     
-    it = batch_iterator_prefetch(shard_paths, cfg.batch_size,
+    it = batch_iterator(shard_paths, cfg.batch_size,
                         shuffle=training, rng=rng)
     
     for batch in it:
