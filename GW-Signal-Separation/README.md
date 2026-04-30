@@ -97,7 +97,6 @@ Where:
 
 This ensures SNR is computed in the presence of noise.
 
-:contentReference[oaicite:0]{index=0}
 
 ---
 
@@ -143,7 +142,6 @@ This ensures uniform noise statistics across frequencies.
 - Shape: (T, F)
 - Used as input to the model
 
-:contentReference[oaicite:1]{index=1}
 
 ---
 
@@ -187,7 +185,6 @@ The model operates entirely in the complex domain.
 
 Separated spectrograms for two sources
 
-:contentReference[oaicite:2]{index=2}
 
 ---
 
@@ -228,7 +225,6 @@ Handles ambiguity in source ordering:
 
     L = SI-SNR + α × Matched Filter Loss
 
-:contentReference[oaicite:3]{index=3}
 
 ---
 
@@ -247,7 +243,6 @@ Training loop:
 - Update parameters
 - Save checkpoints
 
-:contentReference[oaicite:4]{index=4}
 
 ---
 
@@ -282,7 +277,6 @@ Recovered signals:
 - Spectrogram visualization
 - Residual analysis
 
-:contentReference[oaicite:5]{index=5}
 
 ---
 
@@ -297,7 +291,6 @@ Storage format:
 - signal_*.npy → (mixture, h1, h2)
 - params_*.npy → physical parameters
 
-:contentReference[oaicite:6]{index=6}
 
 ---
 
