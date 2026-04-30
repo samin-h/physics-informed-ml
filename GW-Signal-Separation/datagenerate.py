@@ -112,9 +112,9 @@ def generate_waveform(params, psd):
     psd.resize(len(signal_fd))
 
     # # Noise (FD)
-    # noise_fd = frequency_noise_from_psd(psd)
+    noise_fd = frequency_noise_from_psd(psd)
 
-    data_fd = signal_fd #+ noise_fd
+    data_fd = signal_fd + noise_fd
 
     # Template
     hp, _ = get_fd_waveform(**frozen)
