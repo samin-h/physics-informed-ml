@@ -63,7 +63,7 @@ This section describes the exact sequence of steps required to reproduce the ful
 ### **Step 0 — Clone Repository**
 
 ```bash
-git clone https://github.com/<your-username>/GW-Signal-Separation.git
+git clone https://github.com/samin-h/physics-informed-ml.git
 cd GW-Signal-Separation
 ```
 
@@ -159,7 +159,7 @@ Generates:
 
 ---
 
-## ⚡ Quick Test (Minimal Run)
+## Quick Test (Minimal Run)
 
 ```bash
 python generate_data.py --num_samples 1000
@@ -169,7 +169,7 @@ python train.py --epochs 2 --batch_size 16
 
 ---
 
-## 📁 Expected Directory Structure
+## Expected Directory Structure
 
 ```
 GW-Signal-Separation/
