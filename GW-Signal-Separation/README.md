@@ -54,6 +54,153 @@ Each shard contains:
 
 ---
 
+## Execution Pipeline
+
+This section describes the exact sequence of steps required to reproduce the full pipeline from data generation to model evaluation.
+
+---
+
+### **Step 0 — Clone Repository**
+
+```bash
+git clone https://github.com/<your-username>/GW-Signal-Separation.git
+cd GW-Signal-Separation
+```
+
+---
+
+### **Step 1 — Install Dependencies**
+
+```bash
+pip install -r requirements.txt
+```
+
+For GPU (JAX CUDA support):
+
+```bash
+pip install --upgrade "jax[cuda12]"
+```
+
+---
+
+### **Step 2 — Generate Dataset**
+
+```bash
+python generate_data.py \
+    --num_samples 100000 \
+    --num_shards 10 \
+    --output_dir data/hdf
+```
+
+**Output:**
+
+```
+data/hdf/shard_*.h5
+```
+
+---
+
+### **Step 3 — Convert Data Format**
+
+```bash
+python convert.py \
+    --input_dir data/hdf \
+    --output_dir data/npy
+```
+
+**Output:**
+
+```
+data/npy/signal_*.npy  
+data/npy/params_*.npy
+```
+
+---
+
+### **Step 4 — Train Model**
+
+```bash
+python train.py \
+    --data_dir data/npy \
+    --batch_size 80 \
+    --epochs 50
+```
+
+**Output:**
+
+```
+checkpoints/
+logs/
+```
+
+---
+
+### **Step 5 — Run Inference**
+
+```bash
+python infer.py \
+    --checkpoint checkpoints/model.pkl \
+    --input_file sample.npy
+```
+
+---
+
+### **Step 6 — Visualization (Optional)**
+
+```bash
+python fig.py
+```
+
+Generates:
+
+* Time-domain reconstruction plots
+* Spectrogram comparisons
+* Residual analysis
+
+---
+
+## ⚡ Quick Test (Minimal Run)
+
+```bash
+python generate_data.py --num_samples 1000
+python convert.py
+python train.py --epochs 2 --batch_size 16
+```
+
+---
+
+## 📁 Expected Directory Structure
+
+```
+GW-Signal-Separation/
+│
+├── generate_data.py
+├── convert.py
+├── train.py
+├── infer.py
+├── fig.py
+│
+├── data/
+│   ├── hdf/
+│   └── npy/
+│
+├── checkpoints/
+├── logs/
+```
+
+---
+
+##  Notes
+
+* Run steps **in order** — skipping steps will break the pipeline
+* Reduce `--batch_size` if GPU memory is insufficient
+* Data generation is the most time-consuming step
+* `.npy` format is required for efficient training
+
+---
+
+
+
 ## 3. Data Generation
 
 ### 3.1 Waveform Model
